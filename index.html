@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>N Clock</title>
+<style>
+:root {
+  --bg:#fff; --fg:#111; --muted:#666; --accent:#007aff;
+}
+body { margin:0; font-family:-apple-system, sans-serif; background:var(--bg); color:var(--fg);}
+#tabs {display:flex; border-bottom:1px solid #ccc;}
+.tab {flex:1; text-align:center; padding:12px; cursor:pointer;}
+.tab.active {border-bottom:2px solid var(--accent); font-weight:600;}
+#display {font-size:4rem; text-align:center; margin:24px 0;}
+#sliderBox {margin:16px; display:flex; flex-direction:column; align-items:center;}
+input[type=range] {width:80%; margin-top:8px;}
+button {padding:8px 16px; margin:4px; border:none; background:var(--accent); color:#fff; border-radius:6px; cursor:pointer;}
+button:disabled {opacity:0.4; cursor:default;}
+.area {display:none; flex-direction:column; align-items:center; margin:16px;}
+.toggle {width:50px;height:28px; background:#ccc; border-radius:14px; position:relative; cursor:pointer;}
+.toggle .thumb {width:24px;height:24px; background:#fff; border-radius:50%; position:absolute; top:2px; left:2px; transition:0.25s;}
+.toggle.on {background:var(--accent);}
+.toggle.on .thumb {left:24px;}
+#lapList, #alarmsContainer {width:90%; margin-top:8px;}
+.lap-item, .alarm-card {display:flex; justify-content:space-between; padding:6px 12px; border-bottom:1px solid #ccc;}
+</style>
+</head>
+<body>
+<div id="tabs">
+  <div id="tabClock" class="tab active">時計</div>
+  <div id="tabStopwatch" class="tab">ストップウォッチ</div>
+  <div id="tabAlarm" class="tab">アラーム</div>
+  <div id="tabSettings" class="tab">設定</div>
+</div>
+<div id="display">00:00:00</div>
+
+<div id="sliderBox">
+  <div id="labelLeft">1日の長さ</div>
+  <input type="range" id="sliderHours" min="12" max="48" value="24">
+  <div id="labelHours">24 時間</div>
+</div>
+
+<div id="stopwatchArea" class="area">
+  <div>
+    <button id="swStart">Start</button>
+    <button id="swLap" disabled>Lap</button>
+    <button id="swReset" disabled>Reset</button>
+  </div>
+  <div id="lapList"></div>
+</div>
+
+<div id="alarmArea" class="area">
+  <input type="time" id="alarmTime">
+  <button id="alarmSetBtn">アラーム追加</button>
+  <div id="alarmsContainer"></div>
+</div>
+
+<div id="settingsArea" class="area">
+  <label>秒数表示
+    <div id="secondsToggle" class="toggle"><div class="thumb"></div></div>
+  </label>
+  <label>言語
+    <select id="langSelectSettings">
+      <option value="ja">日本語</option>
+      <option value="en">English</option>
+    </select>
+  </label>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded',()=>{
+const display=document.getElementById('display');
+const slider=document.getElementById('sliderHours');
+const labelHours=document.getElementById('labelHours');
+const tabClock=document.getElementById('tabClock');
+const tabStopwatch=document.getElementById('tabStopwatch');
+const tabAlarm=document.getElementById('tabAlarm');
+const tabSettings=document.getElementById('tabSettings');
+const stopwatchArea=document.getElementById('stopwatchArea');
+const swStart=document.getElementById('swStart');
+const swLap=document.getElementById('swLap');
+const swReset=document.getElementById('swReset');
+const lapList=document.getElementById('lapList');
+const alarmArea=document.getElementById('alarmArea');
+const alarmTimeInput=document.getElementById('alarmTime');
+const alarmSetBtn=document.getElementById('alarmSetBtn');
+const alarmsContainer=document.getElementById('alarmsContainer');
+const settingsArea=document.getElementById('settingsArea');
+const secondsToggle=document.getElementById('secondsToggle');
+const langSelectSettings=document.getElementById('langSelectSettings');
+
+let customHours=24;
+let showSeconds=true;
+let lang='ja';
+let mode='clock';
+let lastFrame=performance.now();
+let running=false;
+let elapsedMs=0;
+let laps=[];
+let alarms=[];
+let lastTriggered='';
+
+function t(key){
+const dict={
+ja:{'tab.clock':'時計','tab.stopwatch':'ストップウォッチ','tab.alarm':'アラーム','tab.settings':'設定','btn.start':'Start','btn.stop':'Stop','btn.lap':'Lap','btn.reset':'Reset','btn.addAlarm':'アラーム追加','label.hours':'1日の長さ','label.hoursValue':'24 時間','settings.showSeconds':'秒数表示','settings.language':'言語','footer':'設定は自動で保存されます。','msg.pickTime':'時刻を選択してください','msg.invalidTime':'不正な時刻です','msg.alarmSound':'アラームが鳴りました'},
+en:{'tab.clock':'Clock','tab.stopwatch':'Stopwatch','tab.alarm':'Alarm','tab.settings':'Settings','btn.start':'Start','btn.stop':'Stop','btn.lap':'Lap','btn.reset':'Reset','btn.addAlarm':'Add Alarm','label.hours':'Day length','label.hoursValue':'24 h','settings.showSeconds':'Show seconds','settings.language':'Language','footer':'Settings are saved automatically.','msg.pickTime':'Please pick a time','msg.invalidTime':'Invalid time','msg.alarmSound':'Alarm'}
+};
+return (dict[lang]&&dict[lang][key])?dict[lang][key]:key;
+}
+
+function setMode(m){
+mode=m;
+[tabClock,tabStopwatch,tabAlarm,tabSettings].forEach(t=>t.classList.remove('active'));
+if(m==='clock') {tabClock.classList.add('active'); slider.parentNode.style.display='flex'; stopwatchArea.style.display='none'; alarmArea.style.display='none'; settingsArea.style.display='none';}
+else if(m==='stopwatch') {tabStopwatch.classList.add('active'); slider.parentNode.style.display='none'; stopwatchArea.style.display='flex'; alarmArea.style.display='none'; settingsArea.style.display='none';}
+else if(m==='alarm') {tabAlarm.classList.add('active'); slider.parentNode.style.display='none'; stopwatchArea.style.display='none'; alarmArea.style.display='flex'; settingsArea.style.display='none';}
+else if(m==='settings') {tabSettings.classList.add('active'); slider.parentNode.style.display='none'; stopwatchArea.style.display='none'; alarmArea.style.display='none'; settingsArea.style.display='flex';}
+}
+setMode(mode);
+
+slider.addEventListener('input',()=>{customHours=Number(slider.value); labelHours.textContent=(lang==='en'?customHours+' h':customHours+' 時間');});
+
+tabClock.addEventListener('click',()=>setMode('clock'));
+tabStopwatch.addEventListener('click',()=>setMode('stopwatch'));
+tabAlarm.addEventListener('click',()=>setMode('alarm'));
+tabSettings.addEventListener('click',()=>setMode('settings'));
+
+let swLastFrame=performance.now();
+swStart.addEventListener('click',()=>{
+running=!running;
+if(running){swStart.textContent=t('btn.stop'); swStart.classList.add('active'); swLap.disabled=false; swReset.disabled=true; swLastFrame=performance.now();}
+else{swStart.textContent=t('btn.start'); swStart.classList.remove('active'); swLap.disabled=true; swReset.disabled=false;}
+});
+
+swLap.addEventListener('click'=>{laps.unshift(formatStopwatch(elapsedMs)); if(laps.length>5000) laps.pop(); renderLaps();});
+swReset.addEventListener('click'=>{elapsedMs=0; laps=[]; renderLaps(); swReset.disabled=true;});
+
+function formatStopwatch(ms){const total=Math.floor(ms/1000);const h=Math.floor(total/3600);const m=Math.floor(total/60)%60;const s=total%60; return h>0?`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;}
+function renderLaps(){lapList.innerHTML='';if(laps.length===0){lapList.innerHTML=`<div style="color:#666;padding:8px">${lang==='en'?'No laps':'ラップなし'}</div>`; return;} laps.forEach((t,i)=>{const node=document.createElement('div'); node.className='lap-item'; node.innerHTML=`<div>${lang==='en'?'Lap':'ラップ'} ${laps.length-i}</div><div>${t}</div>`; lapList.appendChild(node);});}
+
+alarmSetBtn.addEventListener('click',()=>{const val=alarmTimeInput.value; if(!val){alert(t('msg.pickTime')); return;} const [hh,mm]=val.split(':').map(n=>Number(n)); if(isNaN(hh)||isNaN(mm)){alert(t('msg.invalidTime')); return;} alarms.push({hour:hh,min:mm,enabled:true}); renderAlarms(); alarmTimeInput.value='';});
+
+function renderAlarms(){alarmsContainer.innerHTML='';if(alarms.length===0){alarmsContainer.innerHTML=`<div style="color:#666;padding:8px">${lang==='en'?'No alarms':'アラームなし'}</div>`; return;} alarms.forEach((a,idx)=>{const card=document.createElement('div'); card.className='alarm-card'; const timeDiv=document.createElement('div'); timeDiv.textContent=`${String(a.hour).padStart(2,'0')}:${String(a.min).padStart(2,'0')}`; const toggle=document.createElement('div'); toggle.className='toggle'+(a.enabled?' on':''); const thumb=document.createElement('div'); thumb.className='thumb'; toggle.appendChild(thumb); toggle.addEventListener('click',()=>{a.enabled=!a.enabled; renderAlarms();}); const del=document.createElement('button'); del.textContent=lang==='en'?'Delete':'削除'; del.addEventListener('click',()=>{alarms.splice(idx,1); renderAlarms();}); card.appendChild(timeDiv); card.appendChild(toggle); card.appendChild(del); alarmsContainer.appendChild(card);});}
+
+secondsToggle.addEventListener('click',()=>{showSeconds=!showSeconds; secondsToggle.classList.toggle('on');});
+
+langSelectSettings.addEventListener('change',()=>{lang=langSelectSettings.value; setMode(mode);});
+
+function tick(now){let dt=now-lastFrame; if(dt<=0||!isFinite(dt)) dt=16; lastFrame=now; const speed=24/customHours; if(mode==='stopwatch'&&running){elapsedMs+=dt*speed;} const d=new Date(); if(mode==='clock'){const secOfDay=d.getHours()*3600+d.getMinutes()*60+d.getSeconds()+d.getMilliseconds()/1000; const virtual=secOfDay*speed; const h=Math.floor(virtual/3600)%24; const m=Math.floor(virtual/60)%60; const s=Math.floor(virtual)%60; display.textContent=showSeconds?`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`:`${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;} requestAnimationFrame(tick);}
+requestAnimationFrame(tick);
+});
+</script>
+</body>
+</html>
